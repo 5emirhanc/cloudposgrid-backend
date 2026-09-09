@@ -15,8 +15,11 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration config)
     {
         // Npgsql legacy timestamp davranışı NpgsqlConfig (ModuleInitializer) içinde ayarlanır.
-        var cs = config.GetConnectionString("Default")
+        var rawCs = config.GetConnectionString("Default")
             ?? throw new InvalidOperationException("ConnectionStrings:Default tanımlı değil.");
+        // Bulut sağlayıcıları bağlantıyı postgresql://... URI'si olarak verir; Npgsql anahtar-değer bekler.
+        // Zaten anahtar-değer biçimindeyse metin değişmeden geçer (bkz. ConnectionStringNormalizer).
+        var cs = Persistence.ConnectionStringNormalizer.Normalize(rawCs);
 
         services.AddScoped<ITenantContext, TenantContext>();
         services.AddScoped<TenantSchemaConnectionInterceptor>();

@@ -94,7 +94,11 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 // appsettings'teki şifresiz/postgres bağlantıya düşülür — bunu açılışta reddet.
 if (builder.Environment.IsProduction())
 {
-    var cs = builder.Configuration.GetConnectionString("Default") ?? "";
+    // Bulut sağlayıcıları bağlantıyı postgresql://... URI'si olarak verir; şifre kontrolünü
+    // normalleştirilmiş (anahtar-değer) biçim üzerinde yapıyoruz, yoksa geçerli bir URI
+    // "şifre içermiyor" sanılıp açılış boşuna reddedilirdi.
+    var cs = CloudPosGrid.Infrastructure.Persistence.ConnectionStringNormalizer
+        .Normalize(builder.Configuration.GetConnectionString("Default") ?? "");
     if (cs.Contains("Include Error Detail", StringComparison.OrdinalIgnoreCase))
         throw new InvalidOperationException(
             "Üretimde 'Include Error Detail' kapalı olmalı (DB istisnaları hassas veri sızdırır). " +

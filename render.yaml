@@ -1,0 +1,50 @@
+# Render Blueprint — CloudPosGrid API.
+#
+# Kullanımı: Render panelinde New → Blueprint → bu depoyu seç. Aşağıdaki servis ve veritabanı
+# otomatik kurulur; elle doldurman gereken tek şey `sync: false` işaretli değerlerdir.
+#
+# NOT (veritabanı ömrü): Render'ın ÜCRETSİZ PostgreSQL'i oluşturulmasından 30 gün sonra silinir.
+# Kısa süreli demo için uygundur. Kalıcı ücretsiz istiyorsan bu bloğu silip Neon'dan aldığın
+# adresi `ConnectionStrings__Default` olarak elle gir — uygulama postgresql://... biçimini de
+# kabul eder (ConnectionStringNormalizer otomatik çevirir).
+
+databases:
+  - name: cloudposgrid-db
+    databaseName: cloudposgrid
+    user: cloudposgrid
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: cloudposgrid-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      # Veritabanı bağlantısı yukarıdaki servisten otomatik gelir (URI biçiminde —
+      # uygulama içeride Npgsql biçimine çevirir).
+      - key: ConnectionStrings__Default
+        fromDatabase:
+          name: cloudposgrid-db
+          property: connectionString
+
+      # JWT imzalama anahtarı — Render rastgele üretir, kimse görmez.
+      - key: Jwt__Secret
+        generateValue: true
+
+      # Uygulamanın (Angular) yayınlandığı adres. CORS bunu birebir eşleştirir:
+      # https ile başlamalı, SONUNDA EĞİK ÇİZGİ OLMAMALI.
+      # Örn: https://cloudposgrid-app.pages.dev
+      - key: Cors__AllowedOrigins__0
+        sync: false
+
+      # API'nin kendi genel adresi (yüklenen görsellerin tam URL'ini üretmek için).
+      # Servis ilk kurulduktan sonra Render'ın verdiği adresi buraya yaz:
+      # https://cloudposgrid-api.onrender.com
+      - key: App__PublicApiUrl
+        sync: false
