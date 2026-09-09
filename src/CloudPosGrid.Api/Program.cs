@@ -265,8 +265,21 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // CORS (Angular)
-var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-    ?? ["http://localhost:4200"];
+//
+// TUZAK: bulut panellerinde TANIMLI ama DEĞERİ BOŞ bir ortam değişkeni (örn. Render'da
+// doldurulmamış `Cors__AllowedOrigins__0`) appsettings.Production.json'daki geçerli değeri
+// EZER ve liste [""] olur. WithOrigins("") hiçbir origin ile eşleşmediği için tarayıcıdan
+// gelen TÜM istekler reddedilir; sunucu tarafında hiçbir iz kalmaz, tek belirti istemcideki
+// "CORS hatası"dır. Bu yüzden boş girdileri eliyoruz.
+//
+// Sondaki eğik çizgi de temizleniyor: CORS eşleşmesi birebir metin karşılaştırmasıdır,
+// "https://site.com/" yazan bir değer "https://site.com" origin'iyle EŞLEŞMEZ.
+var origins = CloudPosGrid.Api.Common.CorsOrigins.Normalize(
+    builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>());
+
+// Geliştirmede yedek adres makul; üretimde SESSİZCE localhost'a düşmek tehlikeli olurdu.
+if (origins.Length == 0 && !builder.Environment.IsProduction())
+    origins = ["http://localhost:4200"];
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
     p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 
@@ -362,6 +375,15 @@ else
     app.UseHsts();
     app.UseHttpsRedirection();
 }
+
+// Origin listesi boşsa API çökmemeli (tarayıcı dışı istemciler çalışmaya devam etsin), ama
+// operatör mutlaka bilmeli: aksi hâlde "site açılmıyor" diye günlerce frontend'de hata aranır.
+if (origins.Length == 0)
+    app.Logger.LogWarning(
+        "Cors:AllowedOrigins BOŞ — tarayıcıdan gelen tüm istekler reddedilecek. " +
+        "Uygulamanın adresini Cors__AllowedOrigins__0 ortam değişkenine yaz (sonunda eğik çizgi OLMADAN).");
+else
+    app.Logger.LogInformation("CORS'a izin verilen adresler: {Origins}", string.Join(", ", origins));
 
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
