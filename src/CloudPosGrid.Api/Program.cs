@@ -295,7 +295,22 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var master = scope.ServiceProvider.GetRequiredService<MasterDbContext>();
-    await master.Database.MigrateAsync();
+    try
+    {
+        await master.Database.MigrateAsync();
+    }
+    catch (Npgsql.NpgsqlException ex)
+    {
+        // Veritabanına ulaşılamıyorsa ham yığın izi sebebi göstermez. Bulut dağıtımında bunun
+        // en sık sebebi, veritabanı ile uygulamanın FARKLI BÖLGELERDE olmasıdır: sağlayıcının
+        // verdiği dahili adres yalnızca kendi bölgesi içinde çözülür. Sebebi açıkça yazalım.
+        var host = new Npgsql.NpgsqlConnectionStringBuilder(master.Database.GetConnectionString()).Host;
+        app.Logger.LogCritical(ex,
+            "Veritabanına bağlanılamadı (sunucu: {Host}). Uygulama başlatılamıyor. " +
+            "Kontrol et: (1) veritabanı ile uygulama AYNI BÖLGEDE mi, " +
+            "(2) ConnectionStrings__Default doğru mu, (3) veritabanı ayakta mı?", host);
+        throw;
+    }
 
     // Mevcut tüm tenant şemalarını en güncel hâle getir (sürümlü idempotent göçler).
     var tenants = await master.Tenants.AsNoTracking()

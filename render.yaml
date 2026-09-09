@@ -14,6 +14,12 @@ databases:
     user: cloudposgrid
     plan: free
     postgresMajorVersion: "16"
+    # ⚠️ BÖLGE, AŞAĞIDAKİ WEB SERVİSİYLE AYNI OLMAK ZORUNDA.
+    # Render'ın `fromDatabase` ile verdiği adres DAHİLİ adrestir; yalnızca aynı bölge içinde
+    # çözülür. Bölgeler farklıysa API veritabanına hiç ulaşamaz, açılışta migration patlar ve
+    # deploy "Failed" görünür — üstelik hata mesajı bölgeden hiç bahsetmez. Bu satır eksik
+    # olduğu için Render veritabanını varsayılan Oregon'da açmıştı, servis ise Frankfurt'taydı.
+    region: frankfurt
 
 services:
   - type: web
