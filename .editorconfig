@@ -1,0 +1,5 @@
+root = true
+
+[*.cs]
+# Kullanılmayan using'leri derlemede uyarı olarak göster (ölü kod hijyeni).
+dotnet_diagnostic.IDE0005.severity = warning

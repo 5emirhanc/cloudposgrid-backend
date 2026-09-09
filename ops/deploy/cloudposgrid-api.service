@@ -1,0 +1,47 @@
+# =====================================================================
+# CloudPosGrid API — systemd servisi
+# Kurulum:
+#   sudo cp cloudposgrid-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cloudposgrid-api
+# Log izleme:  journalctl -u cloudposgrid-api -f
+# =====================================================================
+[Unit]
+Description=CloudPosGrid API (.NET)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+# Uygulama yayın (publish) klasörü
+WorkingDirectory=/var/www/cloudposgrid-api
+ExecStart=/usr/bin/dotnet /var/www/cloudposgrid-api/CloudPosGrid.Api.dll
+Restart=always
+RestartSec=5
+SyslogIdentifier=cloudposgrid-api
+
+# Kaynak sınırları: bağlantı fırtınasında dosya-tanıtıcı (soket) tükenmesini önle.
+# MemoryMax'ı VPS RAM'ine göre elle ayarlayabilirsin (ör. 2GB kutuda MemoryMax=1500M):
+# bir bellek sızıntısı/aşırı yük tüm sunucuyu değil sadece bu servisi etkiler.
+LimitNOFILE=65535
+TasksMax=4096
+#MemoryMax=1500M
+
+# Ayrı, yetkisiz kullanıcı ile çalışsın (önce: sudo useradd -r -s /usr/sbin/nologin cloudposgrid)
+User=cloudposgrid
+Group=cloudposgrid
+
+# Ortam: Production + sırlar ayrı dosyada (bu dosya git'e GİRMEZ)
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+EnvironmentFile=/etc/cloudposgrid/api.env
+
+# Güvenlik sıkılaştırma (systemd sandbox)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+# Yüklenen görsellerin kalıcı dizinine yazabilsin
+ReadWritePaths=/var/lib/cloudposgrid/uploads /var/www/cloudposgrid-api/logs
+
+[Install]
+WantedBy=multi-user.target

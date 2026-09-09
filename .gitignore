@@ -1,0 +1,30 @@
+# Derleme çıktıları
+**/bin/
+**/obj/
+deploy-artifacts/
+
+# ⚠️ GİZLİ / KİŞİSEL VERİ — asla depoya girmemeli
+# (Git satır-SONU yorumu desteklemez; her yorum kendi satırında olmalı.)
+
+# Data Protection anahtarları (çerez/token şifreleme)
+src/CloudPosGrid.Api/dp-keys/
+
+# İşletmelerin yüklediği ürün görselleri (KVKK)
+src/CloudPosGrid.Api/wwwroot/uploads/
+
+# İstek logları (IP + e-posta içerir)
+src/CloudPosGrid.Api/logs/
+
+# Veritabanı yedekleri
+backups/
+
+# Yerel sır dosyaları
+appsettings.Production.local.json
+appsettings.*.local.json
+*.env
+.env
+
+# Araç / IDE
+.vs/
+.idea/
+*.user

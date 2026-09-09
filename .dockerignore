@@ -1,0 +1,19 @@
+# Docker imajına GİRMEMESİ gerekenler. .gitignore ile aynı mantık: imaj hem küçük kalsın
+# hem de geliştirme makinesindeki gizli anahtarlar/müşteri görselleri sunucuya taşınmasın.
+**/bin
+**/obj
+**/logs
+deploy-artifacts
+backups
+tests
+
+# ⚠️ GİZLİ / KİŞİSEL VERİ
+src/CloudPosGrid.Api/dp-keys
+src/CloudPosGrid.Api/wwwroot/uploads
+*.env
+.env
+
+# Araç/IDE + depo meta
+.git
+.vs
+.idea
