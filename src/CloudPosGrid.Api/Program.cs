@@ -264,6 +264,9 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+// Yenileme çerezi politikası (SameSite kararı tek yerde — bkz. Common/RefreshCookiePolicy).
+builder.Services.AddSingleton<CloudPosGrid.Api.Common.RefreshCookiePolicy>();
+
 // CORS (Angular)
 //
 // TUZAK: bulut panellerinde TANIMLI ama DEĞERİ BOŞ bir ortam değişkeni (örn. Render'da

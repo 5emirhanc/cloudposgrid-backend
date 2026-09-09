@@ -14,14 +14,14 @@ public class AuthController : ControllerBase
     private const string RefreshCookie = "cpg_rt";
 
     private readonly IAuthService _auth;
-    private readonly IWebHostEnvironment _env;
+    private readonly Common.RefreshCookiePolicy _cookies;
     private readonly ILoginAuditService _loginAudit;
     private readonly int _refreshDays;
 
-    public AuthController(IAuthService auth, IWebHostEnvironment env, IConfiguration config, ILoginAuditService loginAudit)
+    public AuthController(IAuthService auth, Common.RefreshCookiePolicy cookies, IConfiguration config, ILoginAuditService loginAudit)
     {
         _auth = auth;
-        _env = env;
+        _cookies = cookies;
         _loginAudit = loginAudit;
         _refreshDays = config.GetValue("Jwt:RefreshTokenDays", 7);
     }
@@ -192,15 +192,10 @@ public class AuthController : ControllerBase
     private void ClearRefreshCookie()
         => Response.Cookies.Append(RefreshCookie, "", BuildCookieOptions(DateTimeOffset.UnixEpoch));
 
-    private CookieOptions BuildCookieOptions(DateTimeOffset expires) => new()
-    {
-        HttpOnly = true,                 // JavaScript erişemez -> XSS ile token sızdırılamaz
-        Secure = !_env.IsDevelopment(),  // üretimde yalnızca HTTPS; geliştirmede http://localhost
-        SameSite = SameSiteMode.Lax,     // aynı site içinde gönderilir, cross-site POST'a (CSRF) karşı korur
-        Path = "/api/auth",              // cookie yalnızca auth uçlarına (refresh/logout) gider
-        Expires = expires,
-        IsEssential = true,
-    };
+    // Çerez politikası tek yerden gelir (bkz. Common/RefreshCookiePolicy): uygulama ile API farklı
+    // alan adlarındaysa SameSite=None+Secure, aynı alan adındaysa Lax (CSRF koruması).
+    private CookieOptions BuildCookieOptions(DateTimeOffset expires)
+        => _cookies.Build("/api/auth", expires); // yalnız auth uçlarına (refresh/logout) gider
 }
 
 /// <summary>İstemciye dönen kimlik yanıtı — refresh token gövdede yer almaz (httpOnly cookie'de tutulur).</summary>

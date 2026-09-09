@@ -22,14 +22,14 @@ public class DealerAuthController : ControllerBase
     private readonly IDealerService _dealers;
     private readonly IMasterDbContext _master;
     private readonly IJwtTokenService _jwt;
-    private readonly IWebHostEnvironment _env;
+    private readonly Common.RefreshCookiePolicy _cookies;
 
-    public DealerAuthController(IDealerService dealers, IMasterDbContext master, IJwtTokenService jwt, IWebHostEnvironment env)
+    public DealerAuthController(IDealerService dealers, IMasterDbContext master, IJwtTokenService jwt, Common.RefreshCookiePolicy cookies)
     {
         _dealers = dealers;
         _master = master;
         _jwt = jwt;
-        _env = env;
+        _cookies = cookies;
     }
 
     [HttpPost("login")]
@@ -89,15 +89,8 @@ public class DealerAuthController : ControllerBase
     private void ClearRefreshCookie()
         => Response.Cookies.Append(RefreshCookie, "", BuildCookieOptions(DateTimeOffset.UnixEpoch));
 
-    private CookieOptions BuildCookieOptions(DateTimeOffset expires) => new()
-    {
-        HttpOnly = true,
-        Secure = !_env.IsDevelopment(),
-        SameSite = SameSiteMode.Lax,
-        Path = "/api/dealer/auth", // cookie yalnız bayi auth uçlarına gider
-        Expires = expires,
-        IsEssential = true,
-    };
+    private CookieOptions BuildCookieOptions(DateTimeOffset expires)
+        => _cookies.Build("/api/dealer/auth", expires); // yalnız bayi auth uçlarına gider
 }
 
 public record DealerLoginResult(string AccessToken, DateTime AccessTokenExpiresAt, string Name, string Email, string Code, decimal CommissionRate);

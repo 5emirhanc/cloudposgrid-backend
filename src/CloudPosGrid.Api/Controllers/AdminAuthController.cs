@@ -18,13 +18,13 @@ public class AdminAuthController : ControllerBase
 
     private readonly IPlatformInfo _platform;
     private readonly IJwtTokenService _jwt;
-    private readonly IWebHostEnvironment _env;
+    private readonly Common.RefreshCookiePolicy _cookies;
 
-    public AdminAuthController(IPlatformInfo platform, IJwtTokenService jwt, IWebHostEnvironment env)
+    public AdminAuthController(IPlatformInfo platform, IJwtTokenService jwt, Common.RefreshCookiePolicy cookies)
     {
         _platform = platform;
         _jwt = jwt;
-        _env = env;
+        _cookies = cookies;
     }
 
     [HttpPost("login")]
@@ -78,15 +78,8 @@ public class AdminAuthController : ControllerBase
     private void ClearRefreshCookie()
         => Response.Cookies.Append(RefreshCookie, "", BuildCookieOptions(DateTimeOffset.UnixEpoch));
 
-    private CookieOptions BuildCookieOptions(DateTimeOffset expires) => new()
-    {
-        HttpOnly = true,                 // JavaScript erişemez → XSS ile token sızdırılamaz
-        Secure = !_env.IsDevelopment(),  // üretimde yalnız HTTPS
-        SameSite = SameSiteMode.Lax,
-        Path = "/api/admin/auth",        // cookie yalnız admin auth uçlarına (refresh/logout) gider
-        Expires = expires,
-        IsEssential = true,
-    };
+    private CookieOptions BuildCookieOptions(DateTimeOffset expires)
+        => _cookies.Build("/api/admin/auth", expires); // yalnız admin auth uçlarına gider
 }
 
 public record AdminLoginRequest(string Email, string Password);

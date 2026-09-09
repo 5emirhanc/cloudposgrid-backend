@@ -49,6 +49,14 @@ services:
       - key: Cors__AllowedOrigins__0
         sync: false
 
+      # Uygulama (*.pages.dev) ile API (*.onrender.com) FARKLI kayıtlı alan adlarında olduğu için
+      # yenileme çerezi cross-site sayılır. Bu açık olmazsa tarayıcı çerezi ne kaydeder ne gönderir:
+      # giriş 200 döner ama kullanıcı her sayfa yenilemesinde oturumdan düşer.
+      # İkisini de aynı alan adına (app.example.com + api.example.com) taşıdığında bunu "false" yap —
+      # o zaman çerez first-party olur ve SameSite=Lax'in CSRF koruması geri gelir.
+      - key: Auth__CrossSiteCookies
+        value: "true"
+
       # API'nin kendi genel adresi (yüklenen görsellerin tam URL'ini üretmek için).
       # Servis ilk kurulduktan sonra Render'ın verdiği adresi buraya yaz:
       # https://cloudposgrid-api.onrender.com
