@@ -18,11 +18,19 @@ public class AdminController : ControllerBase
 {
     private readonly IAdminService _service;
     private readonly IDealerService _dealers;
+    private readonly Common.TenantPurger _purger;
+    private readonly Infrastructure.Persistence.MasterDbContext _master;
+    private readonly Application.Abstractions.IPlatformInfo _platform;
 
-    public AdminController(IAdminService service, IDealerService dealers)
+    public AdminController(
+        IAdminService service, IDealerService dealers, Common.TenantPurger purger,
+        Infrastructure.Persistence.MasterDbContext master, Application.Abstractions.IPlatformInfo platform)
     {
         _service = service;
         _dealers = dealers;
+        _purger = purger;
+        _master = master;
+        _platform = platform;
     }
 
     // ---- Bayi (#25) yönetimi — süper-admin bayileri tanımlar/aktifleştirir ----
@@ -67,6 +75,31 @@ public class AdminController : ControllerBase
     [HttpPost("tenants/{id:guid}/suspend")]
     public async Task<ActionResult<TenantAdminDto>> Suspend(Guid id, AdminNoteRequest req, CancellationToken ct)
         => Ok(await _service.SuspendAsync(id, req.Note, ct));
+
+    /// <summary>
+    /// İşletmeyi KALICI olarak siler: kiracı şeması DROP edilir, master kayıtları ve yüklenen
+    /// görseller kaldırılır. GERİ DÖNÜŞÜ YOKTUR — "askıya al" (geçici kilit) ve "iptal et"
+    /// (abonelik sonlandırma) bundan ayrıdır ve veriye dokunmaz.
+    ///
+    /// Kaza koruması: gövdedeki ConfirmName, işletmenin adıyla birebir eşleşmelidir. Silme izi
+    /// AuditLog'a yazılır ve kiracı gittikten sonra da kalır (bu tabloda Tenant'a FK yoktur).
+    /// </summary>
+    [HttpDelete("tenants/{id:guid}")]
+    public async Task<IActionResult> DeleteTenant(Guid id, DeleteTenantRequest req, CancellationToken ct)
+    {
+        var tenant = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions
+            .FirstOrDefaultAsync(_master.Tenants, t => t.Id == id, ct)
+            ?? throw NotFoundException.For("İşletme", id);
+
+        // Adı elle yazdırmak, listeden yanlış satıra basmaya karşı tek gerçek koruma:
+        // kimlik (id) doğru olsa bile yönetici SİLDİĞİ ŞEYİ okumak zorunda kalır.
+        if (!string.Equals(req.ConfirmName?.Trim(), tenant.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                $"Silmeyi onaylamak için işletmenin adını birebir yazın: \"{tenant.Name}\". Hiçbir şey silinmedi.");
+
+        await _purger.PurgeAsync(tenant, _platform.AdminEmail, "TenantDeletedByAdmin", ct);
+        return NoContent();
+    }
 
     [HttpPost("tenants/{id:guid}/cancel")]
     public async Task<ActionResult<TenantAdminDto>> Cancel(Guid id, AdminNoteRequest req, CancellationToken ct)

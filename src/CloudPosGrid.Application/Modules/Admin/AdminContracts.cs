@@ -19,6 +19,13 @@ public record ActivateSubscriptionRequest(TenantPlan Plan, BillingCycle BillingC
 public record ExtendRequest(int Days);
 public record AdminNoteRequest(string? Note);
 
+/// <summary>
+/// İşletmeyi kalıcı silme onayı. <paramref name="ConfirmName"/> işletmenin adıyla birebir
+/// eşleşmek zorundadır: silme geri alınamadığı için tek tıkla tetiklenmemeli, yönetici adı
+/// elle yazarak hangi kaydı sildiğini teyit etmelidir.
+/// </summary>
+public record DeleteTenantRequest(string? ConfirmName);
+
 /// <summary>Müşterinin paket yükseltme (havale) talebi.</summary>
 public record SubscriptionRequestDto(
     Guid Id, Guid TenantId, string TenantName, TenantPlan RequestedPlan, BillingCycle BillingCycle,

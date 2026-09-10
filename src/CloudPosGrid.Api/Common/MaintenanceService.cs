@@ -16,12 +16,15 @@ public sealed class MaintenanceService
 
     private readonly MasterDbContext _master;
     private readonly IEmailSender _email;
+    private readonly TenantPurger _purger;
     private readonly ILogger<MaintenanceService> _logger;
 
-    public MaintenanceService(MasterDbContext master, IEmailSender email, ILogger<MaintenanceService> logger)
+    public MaintenanceService(MasterDbContext master, IEmailSender email, TenantPurger purger,
+        ILogger<MaintenanceService> logger)
     {
         _master = master;
         _email = email;
+        _purger = purger;
         _logger = logger;
     }
 
@@ -34,25 +37,12 @@ public sealed class MaintenanceService
             .ToListAsync(ct);
         if (stale.Count == 0) return 0;
 
+        // Silme sırası ortak serviste (bkz. TenantPurger). Eskiden burada kopyalanmıştı ve iki adım
+        // eksikti: demo işletmenin yüklediği görseller diskte kalıyor, giriş kimliği yetim kalıp
+        // o e-postayı kalıcı olarak bloke ediyordu.
         foreach (var t in stale)
-        {
-            // Şema adı savunma katmanı: interceptor ile aynı sıkı biçim, aksi hâlde DROP atlanır.
-            if (Regex.IsMatch(t.SchemaName, "^[a-z0-9_]{1,63}$"))
-            {
-                // DDL'de tanımlayıcı (şema adı) parametre OLAMAZ; ad yukarıda sıkı regex ile doğrulanıyor.
-#pragma warning disable EF1002
-                await _master.Database.ExecuteSqlRawAsync($"DROP SCHEMA IF EXISTS \"{t.SchemaName}\" CASCADE;", ct);
-#pragma warning restore EF1002
-            }
-            else
-            {
-                _logger.LogWarning("Beklenmedik şema adı, DROP atlandı: {Schema}", t.SchemaName);
-            }
+            await _purger.PurgeAsync(t, "system", "DemoTenantPurged", ct);
 
-            _master.Tenants.Remove(t); // Users + RefreshTokens + SubscriptionRequests cascade silinir
-        }
-
-        await _master.SaveChangesAsync(ct);
         _logger.LogInformation("{Count} süresi dolmuş demo işletme silindi.", stale.Count);
         return stale.Count;
     }

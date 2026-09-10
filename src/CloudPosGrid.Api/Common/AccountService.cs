@@ -15,22 +15,20 @@ namespace CloudPosGrid.Api.Common;
 /// </summary>
 public sealed class AccountService
 {
-    private static readonly Regex SchemaNameRe = new("^[a-z0-9_]{1,63}$", RegexOptions.Compiled);
-
     private readonly MasterDbContext _master;
     private readonly IApplicationDbContext _app;
     private readonly ICurrentUser _currentUser;
     private readonly IPasswordHasher _hasher;
-    private readonly ILogger<AccountService> _logger;
+    private readonly TenantPurger _purger;
 
     public AccountService(MasterDbContext master, IApplicationDbContext app, ICurrentUser currentUser,
-        IPasswordHasher hasher, ILogger<AccountService> logger)
+        IPasswordHasher hasher, TenantPurger purger)
     {
         _master = master;
         _app = app;
         _currentUser = currentUser;
         _hasher = hasher;
-        _logger = logger;
+        _purger = purger;
     }
 
     /// <summary>Oturumdaki kullanıcının kişisel + işletme verilerini yapılandırılmış döndürür (KVKK erişim/taşınabilirlik).</summary>
@@ -80,46 +78,10 @@ public sealed class AccountService
         if (string.IsNullOrEmpty(password) || !_hasher.Verify(password, account.PasswordHash))
             throw new BusinessRuleException("Şifre hatalı. Hesap silinmedi.");
 
-        var tenant = user.Tenant;
-
-        // 1) Önce değişmez audit izini yaz + persist (sonraki adımlar patlasa bile "silindi" izi kalsın).
-        _master.AuditLogs.Add(new AuditLog
-        {
-            TenantId = tenant.Id,
-            ActorEmail = user.Email,
-            Action = "AccountDeleted",
-            TargetType = "Tenant",
-            TargetId = tenant.Id,
-            Details = $"{tenant.Name} ({tenant.Slug})",
-        });
-        await _master.SaveChangesAsync(ct);
-
-        // 2) Tenant şemasını (asıl PII yoğunluğu: cariler, satışlar) DROP et — master bağlantısından, sıkı ad guard'ı ile.
-        if (SchemaNameRe.IsMatch(tenant.SchemaName))
-        {
-            // DDL'de tanımlayıcı (şema adı) parametre OLAMAZ; ad yukarıda sıkı regex ile doğrulanır.
-#pragma warning disable EF1002
-            await _master.Database.ExecuteSqlRawAsync($"DROP SCHEMA IF EXISTS \"{tenant.SchemaName}\" CASCADE;", ct);
-#pragma warning restore EF1002
-        }
-        else
-        {
-            _logger.LogWarning("Beklenmedik şema adı, DROP atlandı (hesap silme): {Schema}", tenant.SchemaName);
-        }
-
-        // 3) Master kayıtlarını sil (Users + RefreshTokens + SubscriptionRequests cascade). Audit izi FK'siz → kalır.
-        _master.Tenants.Remove(tenant);
-        await _master.SaveChangesAsync(ct);
-
-        // 4) KVKK: bu işletme bu hesabın SON üyeliğiyse login kimliğini (Account: e-posta/şifre/2FA) de sil.
-        // Başka işletmesi varsa (çok-şirket) hesap korunur → diğer işletmelerine erişimi sürer.
-        var stillMember = await _master.Users.AnyAsync(u => u.AccountId == account.Id, ct);
-        if (!stillMember)
-        {
-            _master.Accounts.Remove(account);
-            await _master.SaveChangesAsync(ct);
-        }
-        _logger.LogInformation("Hesap silindi (KVKK): tenant {TenantId} ({Slug})", tenant.Id, tenant.Slug);
+        // Silmenin tüm adımları (denetim izi → şema DROP → master kayıtları → yetim kimlik →
+        // yüklenen görseller → cache) tek yerde: bkz. TenantPurger. Buradaki sorumluluk yalnız
+        // YETKİLENDİRME (sahip mi, şifresi doğru mu); yıkım sırası ortak servise ait.
+        await _purger.PurgeAsync(user.Tenant, user.Email, "AccountDeleted", ct);
     }
 }
 

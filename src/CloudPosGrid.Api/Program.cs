@@ -78,6 +78,7 @@ builder.Services.AddScoped<ICurrentBranch, CurrentBranch>();
 builder.Services.AddScoped<IPlanEntitlementProvider, PlanEntitlementProvider>();
 builder.Services.AddScoped<IFileStorage, LocalFileStorage>();
 builder.Services.AddScoped<MaintenanceService>(); // bakım mantığı (testlerde doğrudan çağrılır)
+builder.Services.AddScoped<TenantPurger>();        // işletme kalıcı silme — tek doğru sıra (3 çağıran)
 builder.Services.AddScoped<AccountService>();      // KVKK: veri indirme + hesap silme
 builder.Services.AddHostedService<MaintenanceHostedService>(); // demo temizliği vb. periyodik bakım
 builder.Services.AddHostedService<MarketplaceSyncHostedService>(); // pazaryeri (Trendyol) periyodik senkron
