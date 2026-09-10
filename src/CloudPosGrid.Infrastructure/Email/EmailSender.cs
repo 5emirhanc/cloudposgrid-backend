@@ -11,6 +11,9 @@ namespace CloudPosGrid.Infrastructure.Email;
 /// </summary>
 public sealed class EmailSender : IEmailSender
 {
+    /// <summary>Gönderim üst sınırı. Kayıt akışı bu çağrıyı beklediği için kısa tutulur.</summary>
+    private const int SendTimeoutMs = 15_000;
+
     private readonly SmtpOptions _opt;
     private readonly ILogger<EmailSender> _logger;
 
@@ -42,7 +45,27 @@ public sealed class EmailSender : IEmailSender
         {
             EnableSsl = _opt.UseSsl,
             Credentials = new NetworkCredential(_opt.User, _opt.Password),
+            // .NET varsayılanı 100 SANİYE. Kayıt akışı bu çağrıyı beklediği için, yanlış/erişilemez
+            // bir SMTP sunucusunda "Kod gönderiliyor…" butonu tam 100 saniye donuyordu. Kullanıcı
+            // bu sürede uygulamanın çöktüğünü sanıp sayfayı yeniliyor. Makul bir sınır koyuyoruz.
+            Timeout = SendTimeoutMs,
         };
-        await client.SendMailAsync(message, ct);
+
+        try
+        {
+            await client.SendMailAsync(message, ct);
+        }
+        catch (Exception ex) when (ex is SmtpException or InvalidOperationException or IOException)
+        {
+            // Sunucu tarafında SEBEBİ görünsün: yanlış şifre mi, kapalı port mu, yanlış host mu?
+            // İstisna yukarı gitmeye devam eder — çağırana "gönderildi" demek yanıltıcı olurdu,
+            // kullanıcı gelmeyecek bir postayı beklerdi.
+            _logger.LogError(ex,
+                "E-posta gönderilemedi. Alıcı: {To} | SMTP: {Host}:{Port} SSL={Ssl} Kullanıcı: {User}. " +
+                "Sık sebepler: uygulama şifresi yerine hesap şifresi girilmiş, port/SSL uyumsuz, " +
+                "ya da gönderen adres (From) SMTP kullanıcısından farklı.",
+                to, _opt.Host, _opt.Port, _opt.UseSsl, _opt.User);
+            throw;
+        }
     }
 }
