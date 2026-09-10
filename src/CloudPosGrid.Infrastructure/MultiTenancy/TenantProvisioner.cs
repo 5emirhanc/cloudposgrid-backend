@@ -24,6 +24,18 @@ public sealed partial class TenantProvisioner : ITenantProvisioner
         _migrator = migrator;
     }
 
+    /// <summary>
+    /// Yarım kalmış kurulumun şemasını düşürür. Kurulum akışının catch bloğundan çağrılır;
+    /// bu olmadan master kayıtları geri alınsa bile PostgreSQL şeması yetim kalıyordu.
+    /// </summary>
+    public async Task DropSchemaAsync(string schemaName, CancellationToken ct = default)
+    {
+        if (!SchemaNameRegex().IsMatch(schemaName)) return; // asla tahmin edilmiş adla DROP çalıştırma
+#pragma warning disable EF1002 // schemaName yukarıda regex ile doğrulandı
+        await _db.Database.ExecuteSqlRawAsync($"DROP SCHEMA IF EXISTS \"{schemaName}\" CASCADE;", ct);
+#pragma warning restore EF1002
+    }
+
     public async Task ProvisionAsync(Guid tenantId, string schemaName, string companyName, BusinessType businessType, bool demoData = false, CancellationToken ct = default)
     {
         if (!SchemaNameRegex().IsMatch(schemaName))

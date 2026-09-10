@@ -82,6 +82,8 @@ public sealed class AdminService : IAdminService
                 t.TrialEndsAt, t.SubscriptionEndsAt, t.BillingCycle, t.LastPaymentAt,
                 UserCount = t.Users.Count, t.CreatedAt, t.AdminNote, t.SchemaName,
                 LastLoginAt = t.Users.Max(u => (DateTime?)u.LastLoginAt),
+                // Bayi adı aynı sorguda navigasyon üzerinden gelir — satır başına ek sorgu yok.
+                t.DealerId, DealerName = t.Dealer != null ? t.Dealer.Name : null,
             })
             .ToListAsync(ct);
 
@@ -95,7 +97,7 @@ public sealed class AdminService : IAdminService
                 r.Id, r.Name, r.Slug, r.BusinessType, r.Plan, r.Status,
                 r.TrialEndsAt, r.SubscriptionEndsAt, r.BillingCycle, r.LastPaymentAt,
                 r.UserCount, r.CreatedAt, r.AdminNote,
-                r.LastLoginAt, u.ProductCount, u.SalesCount);
+                r.LastLoginAt, u.ProductCount, u.SalesCount, r.DealerId, r.DealerName);
         }).ToList();
 
         return new PagedResult<TenantAdminDto>(items, total, page, pageSize);
@@ -139,6 +141,8 @@ public sealed class AdminService : IAdminService
             note = $"Havale: {req.Amount:0.##} TL";
 
         ApplyActivation(tenant, req.Plan, req.BillingCycle, note);
+        if (req.Amount is > 0)
+            await RecordPaymentAsync(tenant, req.Amount.Value, req.Plan, req.BillingCycle, note, ct);
         Audit("SubscriptionActivated", tenant.Id, "Tenant", tenant.Id,
             $"{req.Plan}/{req.BillingCycle}" + (req.Amount is > 0 ? $", {req.Amount:0.##} TL" : ""));
         await _db.SaveChangesAsync(ct);
@@ -199,6 +203,8 @@ public sealed class AdminService : IAdminService
 
         var actNote = string.IsNullOrWhiteSpace(note) ? $"Havale onayı: {request.Amount:0.##} TL" : note;
         ApplyActivation(request.Tenant, request.RequestedPlan, request.BillingCycle, actNote);
+        if (request.Amount > 0)
+            await RecordPaymentAsync(request.Tenant, request.Amount, request.RequestedPlan, request.BillingCycle, actNote, ct);
 
         request.Status = SubscriptionRequestStatus.Approved;
         request.DecidedAt = DateTime.UtcNow;
@@ -282,6 +288,38 @@ public sealed class AdminService : IAdminService
             Details = details is { Length: > 1000 } d ? d[..1000] : details,
         });
 
+    /// <summary>
+    /// Tahsil edilen tutarı YAPISAL olarak kaydeder. Önceden rakam yalnız serbest metne
+    /// ("Havale: 500 TL") yazıldığı için ne gerçek gelir raporlanabiliyor ne de bayi hakedişi
+    /// hesaplanabiliyordu.
+    ///
+    /// Bayi payı ÖDEME ANINDA dondurulur (oran + hesaplanan tutar birlikte saklanır): komisyon
+    /// oranı sonradan değiştirilirse geçmiş hakediş değişmemeli, yoksa ödenmiş mahsuplaşmalar
+    /// geriye dönük tutarsız hâle gelir.
+    /// </summary>
+    private async Task RecordPaymentAsync(
+        Tenant tenant, decimal amount, TenantPlan plan, BillingCycle cycle, string? note, CancellationToken ct)
+    {
+        var rate = 0m;
+        if (tenant.DealerId is Guid dealerId)
+            rate = await _db.Dealers.Where(d => d.Id == dealerId)
+                .Select(d => d.CommissionRate).FirstOrDefaultAsync(ct);
+
+        _db.TenantPayments.Add(new TenantPayment
+        {
+            TenantId = tenant.Id,
+            TenantName = tenant.Name, // kiracı silinse de kayıt okunabilir kalsın
+            Amount = amount,
+            Plan = plan,
+            BillingCycle = cycle,
+            PaidAt = DateTime.UtcNow,
+            Note = note,
+            DealerId = tenant.DealerId,
+            CommissionRate = rate,
+            CommissionAmount = Math.Round(amount * rate / 100m, 2),
+        });
+    }
+
     /// <summary>Ücretli aboneliği aktifleştirir; yenilemede mevcut bitiş tarihinin üstüne ekler.</summary>
     private static void ApplyActivation(Tenant t, TenantPlan plan, BillingCycle cycle, string? note)
     {
@@ -310,10 +348,13 @@ public sealed class AdminService : IAdminService
             .MaxAsync(u => (DateTime?)u.LastLoginAt, ct);
         var usage = await _usage.GetAsync(new List<(Guid, string)> { (t.Id, t.SchemaName) }, ct);
         var u = usage.TryGetValue(t.Id, out var uu) ? uu : new TenantUsage(t.Id, 0, 0);
+        var dealerName = t.DealerId is Guid did
+            ? await _db.Dealers.Where(d => d.Id == did).Select(d => d.Name).FirstOrDefaultAsync(ct)
+            : null;
         return new TenantAdminDto(
             t.Id, t.Name, t.Slug, t.BusinessType, t.Plan, t.Status,
             t.TrialEndsAt, t.SubscriptionEndsAt, t.BillingCycle, t.LastPaymentAt,
             userCount, t.CreatedAt, t.AdminNote,
-            lastLogin, u.ProductCount, u.SalesCount);
+            lastLogin, u.ProductCount, u.SalesCount, t.DealerId, dealerName);
     }
 }

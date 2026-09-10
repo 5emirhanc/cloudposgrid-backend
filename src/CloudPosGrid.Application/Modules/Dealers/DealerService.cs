@@ -12,9 +12,31 @@ public record DealerDto(Guid Id, string Name, string Email, string Code, decimal
 public record DealerTenantDto(Guid Id, string Name, string Slug, string Plan, string Status, string BusinessType, DateTime CreatedAt, DateTime? TrialEndsAt, DateTime? SubscriptionEndsAt);
 public record OnboardTenantRequest(string CompanyName, string OwnerFullName, string OwnerEmail, string OwnerPassword, BusinessType BusinessType = BusinessType.General);
 public record OnboardResultDto(Guid TenantId, string CompanyName, string OwnerEmail);
-public record DealerSummaryDto(int TotalTenants, int ActiveTenants, int TrialTenants, decimal CommissionRate);
+public record DealerSummaryDto(
+    int TotalTenants, int ActiveTenants, int TrialTenants, decimal CommissionRate,
+    decimal TotalEarned = 0, decimal TotalPaid = 0, decimal Balance = 0);
 public record CreateDealerRequest(string Name, string Email, string Password, decimal CommissionRate);
 public record SetDealerActiveRequest(bool IsActive);
+
+/// <summary>
+/// Bayinin para durumu. <paramref name="TotalEarned"/> ödeme anında dondurulmuş komisyonların
+/// toplamıdır (oran sonradan değişse bile geçmiş sabit kalır), <paramref name="TotalPaid"/> bayiye
+/// fiilen gönderilenler, <paramref name="Balance"/> ise kalan borç.
+/// </summary>
+public record DealerEarningsDto(decimal TotalEarned, decimal TotalPaid, decimal Balance, int PaidInvoiceCount);
+
+public record DealerPayoutDto(Guid Id, decimal Amount, DateTime PaidAt, string? Note);
+
+/// <summary>Süper-admin'in bir bayi hakkında gördüğü her şey: kimlik, para durumu, getirdiği müşteriler, ödeme geçmişi.</summary>
+public record DealerDetailDto(
+    DealerDto Dealer, DealerEarningsDto Earnings,
+    IReadOnlyList<DealerTenantDto> Tenants, IReadOnlyList<DealerPayoutDto> Payouts);
+
+public record CreatePayoutRequest(decimal Amount, string? Note);
+public record ResetDealerPasswordRequest(string NewPassword);
+
+/// <summary>Bayi silme onayı — işletme silmedeki gibi ad yazdırılarak teyit edilir.</summary>
+public record DeleteDealerRequest(string? ConfirmName);
 
 public interface IDealerService
 {
@@ -28,6 +50,10 @@ public interface IDealerService
     Task<DealerDto> CreateDealerAsync(CreateDealerRequest req, CancellationToken ct = default);
     Task<IReadOnlyList<DealerDto>> ListDealersAsync(CancellationToken ct = default);
     Task SetActiveAsync(Guid dealerId, bool isActive, CancellationToken ct = default);
+    Task<DealerDetailDto> GetDealerDetailAsync(Guid dealerId, CancellationToken ct = default);
+    Task<DealerPayoutDto> RecordPayoutAsync(Guid dealerId, CreatePayoutRequest req, CancellationToken ct = default);
+    Task ResetDealerPasswordAsync(Guid dealerId, string newPassword, CancellationToken ct = default);
+    Task DeleteDealerAsync(Guid dealerId, string? confirmName, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -136,6 +162,10 @@ public sealed class DealerService : IDealerService
             _master.Tenants.Remove(tenant);
             _master.Accounts.Remove(account);
             await _master.SaveChangesAsync(ct);
+            // Şemayı da düşür: kurulum şema OLUŞTURULDUKTAN sonra (tablo kurma/seed sırasında)
+            // patlamış olabilir. Master kayıtlarını geri almak yetmiyordu — şema yetim kalıyor,
+            // yer işgal ediyor ve hangi işletmeye ait olduğu bir daha anlaşılamıyordu.
+            try { await _provisioner.DropSchemaAsync(schemaName, ct); } catch { /* temizlik asıl hatayı gölgelemesin */ }
             throw;
         }
 
@@ -152,7 +182,11 @@ public sealed class DealerService : IDealerService
             .ToListAsync(ct);
         var active = tenants.Count(s => s == TenantStatus.Active);
         var trial = tenants.Count(s => s == TenantStatus.Trial);
-        return new DealerSummaryDto(tenants.Count, active, trial, dealer.CommissionRate);
+        // Bayi kendi parasını da görmeli: önceden panelde yalnız komisyon ORANI yazıyordu,
+        // ne kazandığı ve ne kadarının ödendiği hiçbir yerde görünmüyordu.
+        var earnings = await GetEarningsAsync(dealerId, ct);
+        return new DealerSummaryDto(tenants.Count, active, trial, dealer.CommissionRate,
+            earnings.TotalEarned, earnings.TotalPaid, earnings.Balance);
     }
 
     // ---- Süper-admin bayi CRUD ----
@@ -198,6 +232,108 @@ public sealed class DealerService : IDealerService
         var dealer = await _master.Dealers.FirstOrDefaultAsync(d => d.Id == dealerId, ct)
             ?? throw new NotFoundException("Bayi bulunamadı.");
         dealer.IsActive = isActive;
+        await _master.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Süper-admin bayi detayı: kimlik + para durumu + getirdiği müşteriler + ödeme geçmişi.</summary>
+    public async Task<DealerDetailDto> GetDealerDetailAsync(Guid dealerId, CancellationToken ct = default)
+    {
+        var dealer = await _master.Dealers.AsNoTracking().FirstOrDefaultAsync(d => d.Id == dealerId, ct)
+            ?? throw new NotFoundException("Bayi bulunamadı.");
+
+        var tenants = await ListTenantsAsync(dealerId, ct);
+        var earnings = await GetEarningsAsync(dealerId, ct);
+
+        var payouts = await _master.DealerPayouts.AsNoTracking()
+            .Where(p => p.DealerId == dealerId)
+            .OrderByDescending(p => p.PaidAt)
+            .Select(p => new DealerPayoutDto(p.Id, p.Amount, p.PaidAt, p.Note))
+            .ToListAsync(ct);
+
+        return new DealerDetailDto(ToDto(dealer, tenants.Count), earnings, tenants, payouts);
+    }
+
+    /// <summary>
+    /// Bayinin para durumu. Komisyon, ödemenin YAPILDIĞI AN dondurulmuş tutarlardan toplanır
+    /// (TenantPayment.CommissionAmount) — güncel orandan yeniden hesaplanmaz, aksi hâlde oran
+    /// değişince geçmiş hakediş de değişir ve ödenmiş mahsuplaşmalar tutarsız hâle gelirdi.
+    /// </summary>
+    private async Task<DealerEarningsDto> GetEarningsAsync(Guid dealerId, CancellationToken ct)
+    {
+        var earned = await _master.TenantPayments.AsNoTracking()
+            .Where(p => p.DealerId == dealerId)
+            .GroupBy(_ => 1)
+            .Select(g => new { Total = g.Sum(x => x.CommissionAmount), Count = g.Count() })
+            .FirstOrDefaultAsync(ct);
+
+        var paid = await _master.DealerPayouts.AsNoTracking()
+            .Where(p => p.DealerId == dealerId)
+            .SumAsync(p => (decimal?)p.Amount, ct) ?? 0m;
+
+        var totalEarned = earned?.Total ?? 0m;
+        return new DealerEarningsDto(totalEarned, paid, totalEarned - paid, earned?.Count ?? 0);
+    }
+
+    /// <summary>Bayiye yapılan ödemeyi (mahsuplaşma) kaydeder.</summary>
+    public async Task<DealerPayoutDto> RecordPayoutAsync(Guid dealerId, CreatePayoutRequest req, CancellationToken ct = default)
+    {
+        var exists = await _master.Dealers.AnyAsync(d => d.Id == dealerId, ct);
+        if (!exists) throw new NotFoundException("Bayi bulunamadı.");
+        if (req.Amount <= 0) throw new BusinessRuleException("Ödeme tutarı 0'dan büyük olmalı.");
+
+        var payout = new DealerPayout
+        {
+            DealerId = dealerId,
+            Amount = req.Amount,
+            PaidAt = DateTime.UtcNow,
+            Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
+        };
+        _master.DealerPayouts.Add(payout);
+        await _master.SaveChangesAsync(ct);
+
+        return new DealerPayoutDto(payout.Id, payout.Amount, payout.PaidAt, payout.Note);
+    }
+
+    /// <summary>
+    /// Bayinin şifresini süper-admin sıfırlar. Önceden şifreyi DEĞİŞTİRMENİN hiçbir yolu yoktu:
+    /// bayi kendi şifresini değiştiremiyor, admin de sıfırlayamıyordu — tek çare veritabanına
+    /// elle müdahaleydi.
+    /// </summary>
+    public async Task ResetDealerPasswordAsync(Guid dealerId, string newPassword, CancellationToken ct = default)
+    {
+        var dealer = await _master.Dealers.FirstOrDefaultAsync(d => d.Id == dealerId, ct)
+            ?? throw new NotFoundException("Bayi bulunamadı.");
+        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+            throw new BusinessRuleException("Şifre en az 6 karakter olmalı.");
+
+        dealer.PasswordHash = _hasher.Hash(newPassword);
+        await _master.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Bayiyi siler. Getirdiği işletmeler SİLİNMEZ — çalışmaya devam eder, yalnız bayi atıfını
+    /// kaybeder (Tenant.DealerId → null).
+    ///
+    /// KAPALI KAPI: kapatılmamış hakediş varsa silme reddedilir. Bakiye o bayiye olan BORÇTUR;
+    /// kaydı silmek borcu görünmez yapar ve mahsuplaşma geçmişi de bayiyle birlikte gider.
+    /// Adı yazdırma zorunluluğu işletme silmedeki mantığın aynısı.
+    /// </summary>
+    public async Task DeleteDealerAsync(Guid dealerId, string? confirmName, CancellationToken ct = default)
+    {
+        var dealer = await _master.Dealers.FirstOrDefaultAsync(d => d.Id == dealerId, ct)
+            ?? throw new NotFoundException("Bayi bulunamadı.");
+
+        if (!string.Equals(confirmName?.Trim(), dealer.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException(
+                $"Silmeyi onaylamak için bayinin adını birebir yazın: \"{dealer.Name}\". Hiçbir şey silinmedi.");
+
+        var earnings = await GetEarningsAsync(dealerId, ct);
+        if (earnings.Balance != 0m)
+            throw new BusinessRuleException(
+                $"Bu bayinin kapatılmamış hakedişi var ({earnings.Balance:0.##} TL). " +
+                "Önce ödeme kaydı girip bakiyeyi sıfırlayın, sonra silin.");
+
+        _master.Dealers.Remove(dealer); // ödeme kayıtları cascade; işletmeler DealerId → null ile korunur
         await _master.SaveChangesAsync(ct);
     }
 

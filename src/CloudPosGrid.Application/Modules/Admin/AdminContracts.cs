@@ -8,7 +8,10 @@ public record TenantAdminDto(
     Guid Id, string Name, string Slug, BusinessType BusinessType,
     TenantPlan Plan, TenantStatus Status, DateTime? TrialEndsAt, DateTime? SubscriptionEndsAt,
     BillingCycle? BillingCycle, DateTime? LastPaymentAt, int UserCount, DateTime CreatedAt, string? AdminNote,
-    DateTime? LastLoginAt, int ProductCount, int SalesCount);
+    DateTime? LastLoginAt, int ProductCount, int SalesCount,
+    // Bu müşteriyi hangi bayi getirdi. Bağ (Tenant.DealerId) hep vardı ama panelde hiç
+    // görünmüyordu: yönetici bir işletmenin bayiden mi geldiğini anlayamıyordu.
+    Guid? DealerId = null, string? DealerName = null);
 
 /// <summary>Panel üstü özet metrikler.</summary>
 public record AdminStatsDto(

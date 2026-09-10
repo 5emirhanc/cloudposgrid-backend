@@ -49,6 +49,35 @@ public class AdminController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Bir bayinin tüm tablosu: para durumu, getirdiği müşteriler ve ödeme geçmişi.</summary>
+    [HttpGet("dealers/{id:guid}")]
+    public async Task<ActionResult<DealerDetailDto>> DealerDetail(Guid id, CancellationToken ct)
+        => Ok(await _dealers.GetDealerDetailAsync(id, ct));
+
+    /// <summary>Bayiye yapılan ödemeyi (hakediş mahsuplaşması) kaydeder.</summary>
+    [HttpPost("dealers/{id:guid}/payouts")]
+    public async Task<ActionResult<DealerPayoutDto>> CreateDealerPayout(Guid id, CreatePayoutRequest req, CancellationToken ct)
+        => Ok(await _dealers.RecordPayoutAsync(id, req, ct));
+
+    /// <summary>Bayinin şifresini sıfırlar (bayi kendi şifresini değiştiremiyor).</summary>
+    [HttpPost("dealers/{id:guid}/password")]
+    public async Task<IActionResult> ResetDealerPassword(Guid id, ResetDealerPasswordRequest req, CancellationToken ct)
+    {
+        await _dealers.ResetDealerPasswordAsync(id, req.NewPassword, ct);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Bayiyi siler. Getirdiği işletmeler silinmez, yalnız bayi atıfını kaybeder.
+    /// Kapatılmamış hakediş varsa reddedilir; onay için bayinin adı birebir yazılmalıdır.
+    /// </summary>
+    [HttpDelete("dealers/{id:guid}")]
+    public async Task<IActionResult> DeleteDealer(Guid id, DeleteDealerRequest req, CancellationToken ct)
+    {
+        await _dealers.DeleteDealerAsync(id, req.ConfirmName, ct);
+        return NoContent();
+    }
+
     [HttpGet("tenants")]
     public async Task<ActionResult<PagedResult<TenantAdminDto>>> Tenants(
         [FromQuery] string? filter, [FromQuery] string? search,

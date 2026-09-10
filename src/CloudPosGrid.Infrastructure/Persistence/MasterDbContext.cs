@@ -17,6 +17,8 @@ public class MasterDbContext : DbContext, IMasterDbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<EmailVerification> EmailVerifications => Set<EmailVerification>();
     public DbSet<SubscriptionRequest> SubscriptionRequests => Set<SubscriptionRequest>();
+    public DbSet<TenantPayment> TenantPayments => Set<TenantPayment>();
+    public DbSet<DealerPayout> DealerPayouts => Set<DealerPayout>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<LoginEvent> LoginEvents => Set<LoginEvent>();
 
@@ -81,6 +83,36 @@ public class MasterDbContext : DbContext, IMasterDbContext
                 .ValueGeneratedOnAddOrUpdate().IsConcurrencyToken();
             e.HasOne(x => x.Tenant).WithMany()
                 .HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<TenantPayment>(e =>
+        {
+            e.ToTable("tenant_payments");
+            e.Property(x => x.TenantName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Plan).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.BillingCycle).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.Note).HasMaxLength(500);
+            e.Property(x => x.CommissionRate).HasPrecision(9, 2);
+            e.Property(x => x.CommissionAmount).HasPrecision(18, 2);
+            e.HasIndex(x => x.TenantId);
+            e.HasIndex(x => x.PaidAt);
+            e.HasIndex(x => x.DealerId); // bayi hakediş toplamı bu indeks üzerinden okunur
+            // Tenant'a FK YOK bilinçli (audit_logs ile aynı gerekçe): işletme silinse bile MALİ KAYIT
+            // kalmalı. Bu yüzden işletme adı ödeme anında kopyalanıyor — kiracı gittikten sonra da okunur.
+            // Dealer'a da FK yok: bayi silinse geçmiş gelir kaydı bozulmamalı.
+        });
+
+        b.Entity<DealerPayout>(e =>
+        {
+            e.ToTable("dealer_payouts");
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Note).HasMaxLength(500);
+            e.HasIndex(x => x.DealerId);
+            e.HasIndex(x => x.PaidAt);
+            // Ödemeler bayiye aittir: bayi silinirse mahsuplaşma kayıtları da gider.
+            e.HasOne(x => x.Dealer).WithMany()
+                .HasForeignKey(x => x.DealerId).OnDelete(DeleteBehavior.Cascade);
         });
 
         b.Entity<AuditLog>(e =>

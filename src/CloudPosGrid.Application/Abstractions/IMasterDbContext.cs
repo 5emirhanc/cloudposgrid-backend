@@ -13,6 +13,8 @@ public interface IMasterDbContext
     DbSet<RefreshToken> RefreshTokens { get; }
     DbSet<EmailVerification> EmailVerifications { get; }
     DbSet<SubscriptionRequest> SubscriptionRequests { get; }
+    DbSet<TenantPayment> TenantPayments { get; }
+    DbSet<DealerPayout> DealerPayouts { get; }
     DbSet<AuditLog> AuditLogs { get; }
     /// <summary>Oturum açma kayıtları (başarılı/başarısız giriş — IP/cihaz) — #46 oturum geçmişi.</summary>
     DbSet<LoginEvent> LoginEvents { get; }
